@@ -116,11 +116,17 @@ func autoConnectFirstCDP() {
 	autoConnectFromPorts(activePorts)
 }
 
-// autoConnectFromPorts connects to the first available CDP page from a port scan result.
+// autoConnectFromPorts connects to ALL available CDP pages from a port scan result.
 func autoConnectFromPorts(activePorts map[int][]cdp.Page) {
+	connected := 0
+	seen := make(map[string]bool) // avoid duplicate IDs
 	for port, pages := range activePorts {
 		for _, page := range pages {
 			if page.Type != "page" || page.WebSocketDebuggerURL == "" {
+				continue
+			}
+			// Skip empty/internal pages
+			if page.Title == "" || strings.HasPrefix(page.URL, "edge://") || strings.HasPrefix(page.URL, "chrome://") {
 				continue
 			}
 			conn, err := cdp.Dial(page.WebSocketDebuggerURL)
@@ -130,12 +136,23 @@ func autoConnectFromPorts(activePorts map[int][]cdp.Page) {
 			conn.PageTitle = page.Title
 			conn.PageURL = page.URL
 			_ = conn.SetViewport(1440, 900)
-			tools.SetConn(conn, page.Title, page.URL, port)
-			fmt.Fprintf(os.Stderr, "  Connected: %s (%s) port %d\n", page.Title, page.URL, port)
-			return
+			// Derive ID from URL to avoid duplicates
+			id := tools.DeriveAppIDFromURL(page.Title, page.URL)
+			if seen[id] {
+				conn.Close()
+				continue
+			}
+			seen[id] = true
+			tools.SetAppConn(id, conn, page.Title, page.URL, port)
+			fmt.Fprintf(os.Stderr, "  Connected: %s [%s] port %d\n", id, page.Title, port)
+			connected++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "  No CDP apps found\n")
+	if connected == 0 {
+		fmt.Fprintf(os.Stderr, "  No CDP apps found\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "  Connected %d app(s)\n", connected)
+	}
 }
 
 func main() {

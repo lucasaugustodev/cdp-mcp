@@ -111,7 +111,7 @@ body { background: #0a0a0a; color: #e0e0e0; font-family: system-ui, -apple-syste
 
 <!-- Tab Bar -->
 <div class="tab-bar">
-  <div id="tabs"></div>
+  <div id="tabs" style="display:flex;align-items:center;gap:0;flex-shrink:0"></div>
   <button class="tab-add" onclick="openAddModal()" title="Add App">+</button>
   <div class="tab-spacer"></div>
   <div class="tab-right">

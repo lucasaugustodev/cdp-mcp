@@ -115,12 +115,12 @@ func GetConn() *cdp.Connection {
 // SetConn sets the active CDP connection (backwards compatible).
 // Derives appId from the title.
 func SetConn(conn *cdp.Connection, title, url string, port int) {
-	appID := deriveAppIDFromURL(title, url)
+	appID := DeriveAppIDFromURL(title, url)
 	SetAppConn(appID, conn, title, url, port)
 }
 
-// deriveAppIDFromURL tries URL domain first, then falls back to title
-func deriveAppIDFromURL(title, url string) string {
+// DeriveAppIDFromURL tries URL domain first, then falls back to title
+func DeriveAppIDFromURL(title, url string) string {
 	urlLower := strings.ToLower(url)
 	domainMap := map[string]string{
 		"whatsapp.com": "whatsapp", "linkedin.com": "linkedin", "instagram.com": "instagram",
