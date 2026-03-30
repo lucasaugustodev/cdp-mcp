@@ -451,11 +451,13 @@ func handleNavigate(args map[string]interface{}) mcp.ToolResult {
 
 	// Update stored info without closing connection
 	state.mu.Lock()
-	if newTitle != "" {
-		state.connTitle = newTitle
-	}
-	if newURL != "" {
-		state.connURL = newURL
+	if app := state.getActiveAppState(); app != nil {
+		if newTitle != "" {
+			app.Title = newTitle
+		}
+		if newURL != "" {
+			app.URL = newURL
+		}
 	}
 	state.mu.Unlock()
 

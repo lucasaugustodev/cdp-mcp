@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -24,98 +25,197 @@ type ActivityEntry struct {
 	Result    string    `json:"result"`
 }
 
+// AppState holds the state for a single connected CDP app.
+type AppState struct {
+	Conn      *cdp.Connection
+	AppID     string
+	Title     string
+	URL       string
+	Port      int
+	Recording bool
+	Events    []cdp.RecordEvent
+}
+
 // State holds the shared state for all tools.
 type State struct {
-	mu             sync.RWMutex
-	conn           *cdp.Connection
-	connTitle      string
-	connURL        string
-	connPort       int
-	lastApps       []AppEntry
-	recordedEvents []cdp.RecordEvent
-	recording      bool
-	activityLog    []ActivityEntry
+	mu          sync.RWMutex
+	apps        map[string]*AppState // appId → state
+	activeAppID string               // currently selected app
+	lastScan    []AppEntry
+	activityLog []ActivityEntry
 }
 
 // Global state instance
-var state = &State{}
+var state = &State{
+	apps: make(map[string]*AppState),
+}
 
-// GetConn returns the current CDP connection, or nil if not connected.
+// deriveAppID creates an app ID from a title (lowercase, no spaces).
+func deriveAppID(title string) string {
+	id := strings.ToLower(title)
+	id = strings.ReplaceAll(id, " ", "-")
+	if id == "" {
+		id = "default"
+	}
+	return id
+}
+
+// getActiveAppState returns the active app state, falling back to the first
+// connected app if activeAppID is empty or stale. Caller must hold at least RLock.
+func (s *State) getActiveAppState() *AppState {
+	// Try the explicitly set active app
+	if s.activeAppID != "" {
+		if app, ok := s.apps[s.activeAppID]; ok {
+			return app
+		}
+	}
+	// Fallback: pick the first connected (non-closed) app
+	for _, app := range s.apps {
+		if app.Conn != nil && !app.Conn.IsClosed() {
+			s.activeAppID = app.AppID
+			return app
+		}
+	}
+	return nil
+}
+
+// GetConn returns the active app's CDP connection, or nil if not connected.
 func GetConn() *cdp.Connection {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	if state.conn != nil && state.conn.IsClosed() {
+	app := state.getActiveAppState()
+	if app == nil || app.Conn == nil || app.Conn.IsClosed() {
 		return nil
 	}
-	return state.conn
+	return app.Conn
 }
 
-// SetConn sets the active CDP connection.
+// SetConn sets the active CDP connection (backwards compatible).
+// Derives appId from the title.
 func SetConn(conn *cdp.Connection, title, url string, port int) {
+	appID := deriveAppID(title)
+	SetAppConn(appID, conn, title, url, port)
+}
+
+// SetAppConn sets a CDP connection for an explicit appId.
+func SetAppConn(appID string, conn *cdp.Connection, title, url string, port int) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	// Close previous connection if any
-	if state.conn != nil && !state.conn.IsClosed() {
-		state.conn.Close()
+	// Close previous connection for this appID if any
+	if existing, ok := state.apps[appID]; ok {
+		if existing.Conn != nil && !existing.Conn.IsClosed() {
+			existing.Conn.Close()
+		}
 	}
-	state.conn = conn
-	state.connTitle = title
-	state.connURL = url
-	state.connPort = port
+	state.apps[appID] = &AppState{
+		Conn:  conn,
+		AppID: appID,
+		Title: title,
+		URL:   url,
+		Port:  port,
+	}
+	// Set as active if no active app or this is the first connection
+	if state.activeAppID == "" {
+		state.activeAppID = appID
+	}
 }
 
-// GetConnInfo returns connection metadata.
+// GetConnInfo returns connection metadata for the active app.
 func GetConnInfo() (title, url string, port int, connected bool) {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	if state.conn == nil || state.conn.IsClosed() {
+	app := state.getActiveAppState()
+	if app == nil || app.Conn == nil || app.Conn.IsClosed() {
 		return "", "", 0, false
 	}
-	return state.connTitle, state.connURL, state.connPort, true
+	return app.Title, app.URL, app.Port, true
+}
+
+// SetActiveApp switches the active app by appId.
+func SetActiveApp(appID string) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if _, ok := state.apps[appID]; ok {
+		state.activeAppID = appID
+	}
+}
+
+// GetAppState returns the state for a specific appId, or nil.
+func GetAppState(appID string) *AppState {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.apps[appID]
+}
+
+// ListConnectedApps returns all apps with live (non-closed) connections.
+func ListConnectedApps() []AppState {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	var result []AppState
+	for _, app := range state.apps {
+		if app.Conn != nil && !app.Conn.IsClosed() {
+			result = append(result, *app)
+		}
+	}
+	return result
 }
 
 // SetLastApps stores the last scanned apps list.
 func SetLastApps(apps []AppEntry) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.lastApps = apps
+	state.lastScan = apps
 }
 
 // GetLastApps returns the last scanned apps list.
 func GetLastApps() []AppEntry {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	return state.lastApps
+	return state.lastScan
 }
 
-// AppendRecordEvent appends a recording event.
+// AppendRecordEvent appends a recording event to the active app.
 func AppendRecordEvent(evt cdp.RecordEvent) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.recordedEvents = append(state.recordedEvents, evt)
+	app := state.getActiveAppState()
+	if app != nil {
+		app.Events = append(app.Events, evt)
+	}
 }
 
-// GetRecordedEvents returns and clears recorded events.
+// GetRecordedEvents returns and clears recorded events from the active app.
 func GetRecordedEvents() []cdp.RecordEvent {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	events := state.recordedEvents
-	state.recordedEvents = nil
+	app := state.getActiveAppState()
+	if app == nil {
+		return nil
+	}
+	events := app.Events
+	app.Events = nil
 	return events
 }
 
-// SetRecording sets the recording state flag.
+// SetRecording sets the recording state flag on the active app.
 func SetRecording(val bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	state.recording = val
+	app := state.getActiveAppState()
+	if app != nil {
+		app.Recording = val
+	}
 }
 
-// IsRecording returns whether recording is active.
+// IsRecording returns whether recording is active on the active app.
 func IsRecording() bool {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	return state.recording
+	app := state.getActiveAppState()
+	if app == nil {
+		return false
+	}
+	return app.Recording
 }
 
 // LogActivity logs a tool call for the dashboard activity feed.
@@ -150,26 +250,29 @@ func GetRecentActivity(n int) []ActivityEntry {
 	return result
 }
 
-// GetAllConnections returns info about the active CDP connection.
-// Returns a map of id -> connection for the dashboard.
+// GetAllConnections returns info about all live CDP connections.
+// Returns a map of appId -> connection for the dashboard.
 func GetAllConnections() map[string]*cdp.Connection {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 	result := make(map[string]*cdp.Connection)
-	if state.conn != nil && !state.conn.IsClosed() {
-		result[state.connTitle] = state.conn
+	for id, app := range state.apps {
+		if app.Conn != nil && !app.Conn.IsClosed() {
+			result[id] = app.Conn
+		}
 	}
 	return result
 }
 
-// GetConnDetails returns the connection details for the dashboard.
+// GetConnDetails returns the connection details for the active app (dashboard).
 func GetConnDetails() (title, url string, port int, conn *cdp.Connection) {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	if state.conn == nil || state.conn.IsClosed() {
+	app := state.getActiveAppState()
+	if app == nil || app.Conn == nil || app.Conn.IsClosed() {
 		return "", "", 0, nil
 	}
-	return state.connTitle, state.connURL, state.connPort, state.conn
+	return app.Title, app.URL, app.Port, app.Conn
 }
 
 // activityListeners holds WebSocket notification channels.
