@@ -200,14 +200,7 @@ func handleMonitorEvent(conn *cdp.Connection, taskID string, eventData string) {
 		executeMonitorAction(task.AppID, mc.Action, evt)
 
 	case "workflow":
-		var wc config.WorkflowConfig
-		if err := json.Unmarshal(task.Config, &wc); err != nil {
-			log.Printf("[monitor] Failed to parse workflow config for task %s: %v", taskID, err)
-			return
-		}
-		for _, action := range wc.Actions {
-			executeMonitorAction(task.AppID, action, evt)
-		}
+		ExecuteWorkflow(*task)
 	}
 
 	tools.LogActivity("monitor:event", fmt.Sprintf("task=%s text=%s", taskID, truncate(evt.Text, 100)), "triggered")
