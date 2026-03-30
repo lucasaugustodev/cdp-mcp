@@ -214,6 +214,7 @@ func handleFind(args map[string]interface{}) mcp.ToolResult {
 	}
 
 	if len(elements) == 0 {
+		LogActivity("find", fmt.Sprintf("query=%q", query), "0 matches")
 		return mcp.TextResult(fmt.Sprintf("No elements found matching %q", query))
 	}
 
@@ -230,6 +231,7 @@ func handleFind(args map[string]interface{}) mcp.ToolResult {
 			i, el.TagName, display, el.X, el.Y, el.Width, el.Height, el.Selector))
 	}
 	lines = append(lines, fmt.Sprintf("\nFound %d elements matching %q", len(elements), query))
+	LogActivity("find", fmt.Sprintf("query=%q click=%v", query, clickFirst), fmt.Sprintf("%d matches", len(elements)))
 
 	if clickFirst && len(elements) > 0 {
 		el := elements[0]
@@ -268,13 +270,16 @@ func handleJS(args map[string]interface{}) mcp.ToolResult {
 		return mcp.TextResult("undefined")
 	}
 
+	var resultText string
 	switch v := result.(type) {
 	case string:
-		return mcp.TextResult(v)
+		resultText = v
 	default:
 		data, _ := json.MarshalIndent(result, "", "  ")
-		return mcp.TextResult(string(data))
+		resultText = string(data)
 	}
+	LogActivity("js", truncateStr(code, 80), truncateStr(resultText, 80))
+	return mcp.TextResult(resultText)
 }
 
 func handleScreenshot(args map[string]interface{}) mcp.ToolResult {
@@ -288,6 +293,7 @@ func handleScreenshot(args map[string]interface{}) mcp.ToolResult {
 		return mcp.ErrorResult(fmt.Sprintf("Screenshot failed: %v", err))
 	}
 
+	LogActivity("screenshot", "", "captured")
 	return mcp.ImageResult(b64, "image/jpeg")
 }
 
@@ -322,6 +328,7 @@ func handleTypeText(args map[string]interface{}) mcp.ToolResult {
 		time.Sleep(30 * time.Millisecond)
 	}
 
+	LogActivity("type_text", truncateStr(text, 40), fmt.Sprintf("%d chars", len([]rune(text))))
 	return mcp.TextResult(fmt.Sprintf("Typed %d characters", len([]rune(text))))
 }
 
@@ -388,6 +395,7 @@ func handlePressKey(args map[string]interface{}) mcp.ToolResult {
 		return mcp.ErrorResult(fmt.Sprintf("Key release failed: %v", err))
 	}
 
+	LogActivity("press_key", keyName, "ok")
 	return mcp.TextResult(fmt.Sprintf("Pressed key: %s", keyName))
 }
 
@@ -451,6 +459,7 @@ func handleNavigate(args map[string]interface{}) mcp.ToolResult {
 	}
 	state.mu.Unlock()
 
+	LogActivity("navigate", url, fmt.Sprintf("title=%s", newTitle))
 	return mcp.TextResult(fmt.Sprintf("Navigated to: %s\nTitle: %s", newURL, newTitle))
 }
 
@@ -465,5 +474,13 @@ func handleElements(args map[string]interface{}) mcp.ToolResult {
 		return mcp.ErrorResult(fmt.Sprintf("Elements listing failed: %v", err))
 	}
 
+	LogActivity("elements", "", truncateStr(result, 60))
 	return mcp.TextResult(result)
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }

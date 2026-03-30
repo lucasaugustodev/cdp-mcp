@@ -68,6 +68,23 @@ var knownWebView2Apps = map[string]string{
 	"linkedin": "7EE7776C.LinkedInforWindows_w1wdnht996qgy",
 }
 
+// knownPWAs maps app names to their URLs for PWAs installed via Edge
+var knownPWAs = map[string]string{
+	"facebook":  "https://www.facebook.com",
+	"instagram": "https://www.instagram.com",
+	"twitter":   "https://x.com",
+	"youtube":   "https://www.youtube.com",
+	"spotify":   "https://open.spotify.com",
+	"netflix":   "https://www.netflix.com",
+	"gmail":     "https://mail.google.com",
+	"outlook":   "https://outlook.live.com",
+	"github":    "https://github.com",
+	"reddit":    "https://www.reddit.com",
+	"notion":    "https://www.notion.so",
+	"chatgpt":   "https://chat.openai.com",
+	"tiktok":    "https://www.tiktok.com",
+}
+
 func handleInventory(args map[string]interface{}) mcp.ToolResult {
 	var lines []string
 
@@ -386,8 +403,27 @@ func enableCDPAndConnect(appName string) mcp.ToolResult {
 		}
 	}
 
+	// Check if it's a known PWA (runs inside Edge)
+	if launchCmd == "" {
+		for key, pwaURL := range knownPWAs {
+			if strings.Contains(appLower, key) {
+				// Kill Edge (PWAs run inside Edge)
+				exec.Command("powershell", "-NoProfile", "-Command", `Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force`).Run()
+				time.Sleep(2 * time.Second)
+
+				// Relaunch Edge with CDP flag, restore session, and open the PWA URL
+				edgePath := `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
+				cmd := exec.Command(edgePath, fmt.Sprintf("--remote-debugging-port=%d", port), "--restore-last-session", pwaURL)
+				cmd.Start()
+				launchCmd = "pwa:" + key
+				log.Printf("[CDP] Launching PWA %s (%s) via Edge with CDP on port %d", key, pwaURL, port)
+				break
+			}
+		}
+	}
+
 	// Check if it's Edge
-	if strings.Contains(appLower, "edge") || strings.Contains(appLower, "instagram") || strings.Contains(appLower, "chrome") {
+	if launchCmd == "" && (strings.Contains(appLower, "edge") || strings.Contains(appLower, "chrome")) {
 		// Kill Edge
 		exec.Command("powershell", "-NoProfile", "-Command", `Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force`).Run()
 		time.Sleep(2 * time.Second)
@@ -420,6 +456,15 @@ func enableCDPAndConnect(appName string) mcp.ToolResult {
 	log.Printf("[CDP] Waiting for %s to start on port %d...", appName, port)
 	time.Sleep(5 * time.Second)
 
+	// Determine the PWA URL to match against (if applicable)
+	pwaMatchURL := ""
+	for key, pwaURL := range knownPWAs {
+		if strings.Contains(appLower, key) {
+			pwaMatchURL = pwaURL
+			break
+		}
+	}
+
 	// Try to connect (retry a few times)
 	for retry := 0; retry < 5; retry++ {
 		activePorts := cdp.ScanCDPPorts()
@@ -429,8 +474,11 @@ func enableCDPAndConnect(appName string) mcp.ToolResult {
 				if page.Type != "page" {
 					continue
 				}
-				if strings.Contains(strings.ToLower(page.Title), appLower) ||
-					strings.Contains(strings.ToLower(page.URL), appLower) {
+				pageTitle := strings.ToLower(page.Title)
+				pageURL := strings.ToLower(page.URL)
+				if strings.Contains(pageTitle, appLower) ||
+					strings.Contains(pageURL, appLower) ||
+					(pwaMatchURL != "" && strings.Contains(pageURL, strings.ToLower(pwaMatchURL))) {
 					return connectToApp(AppEntry{Title: page.Title, URL: page.URL, Port: p, WsURL: page.WebSocketDebuggerURL})
 				}
 			}
@@ -467,10 +515,17 @@ func connectToApp(app AppEntry) mcp.ToolResult {
 	conn.PageTitle = app.Title
 	conn.PageURL = app.URL
 
+	// Set viewport for consistent screenshots
+	if err := conn.SetViewport(1440, 900); err != nil {
+		log.Printf("[CDP] Warning: failed to set viewport: %v", err)
+	}
+
 	SetConn(conn, app.Title, app.URL, app.Port)
 	log.Printf("Connected to %q at port %d", app.Title, app.Port)
 
-	return mcp.TextResult(fmt.Sprintf("Connected to %q\nURL: %s\nPort: %d", app.Title, app.URL, app.Port))
+	LogActivity("connect", fmt.Sprintf("target=%q", app.Title), fmt.Sprintf("connected port=%d", app.Port))
+
+	return mcp.TextResult(fmt.Sprintf("Connected to %q\nURL: %s\nPort: %d\nViewport: 1440x900", app.Title, app.URL, app.Port))
 }
 
 func handleStatus(args map[string]interface{}) mcp.ToolResult {
