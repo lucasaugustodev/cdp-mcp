@@ -90,6 +90,55 @@ func handleApps(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// cleanAppID generates a clean app ID from title and URL.
+// "(20) WhatsApp" → "whatsapp", "Feed | LinkedIn" → "linkedin"
+func cleanAppID(title, url string) string {
+	// Try to derive from known domain names in URL
+	domainMap := map[string]string{
+		"whatsapp.com": "whatsapp", "linkedin.com": "linkedin", "instagram.com": "instagram",
+		"facebook.com": "facebook", "twitter.com": "twitter", "x.com": "twitter",
+		"youtube.com": "youtube", "spotify.com": "spotify", "github.com": "github",
+		"slack.com": "slack", "discord.com": "discord", "reddit.com": "reddit",
+		"telegram.org": "telegram", "notion.so": "notion", "figma.com": "figma",
+		"gmail.com": "gmail", "mail.google.com": "gmail",
+	}
+	urlLower := strings.ToLower(url)
+	for domain, id := range domainMap {
+		if strings.Contains(urlLower, domain) {
+			return id
+		}
+	}
+	// Fall back to cleaned title
+	id := strings.ToLower(title)
+	// Remove leading numbers and parentheses: "(20) WhatsApp" → "whatsapp"
+	for len(id) > 0 && (id[0] == '(' || id[0] == ')' || id[0] == ' ' || (id[0] >= '0' && id[0] <= '9')) {
+		id = id[1:]
+	}
+	// Remove everything after | or -
+	for _, sep := range []string{" | ", " - ", " — "} {
+		if idx := strings.Index(id, sep); idx > 0 {
+			id = id[:idx]
+		}
+	}
+	id = strings.TrimSpace(id)
+	// Replace non-alphanumeric with hyphens
+	var clean []byte
+	for _, c := range []byte(id) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			clean = append(clean, c)
+		} else if c == ' ' || c == '-' || c == '_' {
+			if len(clean) > 0 && clean[len(clean)-1] != '-' {
+				clean = append(clean, '-')
+			}
+		}
+	}
+	result := strings.Trim(string(clean), "-")
+	if len(result) > 30 {
+		result = result[:30]
+	}
+	return result
+}
+
 // extractAppID extracts the app ID from paths like /api/apps/:id/screenshot
 // Expected format: /api/apps/{id}/{action}
 func extractAppID(path string) string {
@@ -221,9 +270,34 @@ func handleAddApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tools.LogActivity("dashboard:add-app", fmt.Sprintf("id=%s name=%s", body.ID, body.Name), "ok")
+	// Try to connect via CDP
+	connected := false
+	if body.CDPPort > 0 {
+		pages, err := cdp.ListPages(body.CDPPort)
+		if err == nil {
+			for _, page := range pages {
+				if page.Type == "page" && page.WebSocketDebuggerURL != "" {
+					conn, err := cdp.Dial(page.WebSocketDebuggerURL)
+					if err == nil {
+						_ = conn.SetViewport(1440, 900)
+						conn.PageTitle = page.Title
+						conn.PageURL = page.URL
+						tools.SetAppConn(body.ID, conn, page.Title, page.URL, body.CDPPort)
+						connected = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	status := "saved"
+	if connected {
+		status = "connected"
+	}
+	tools.LogActivity("dashboard:add-app", fmt.Sprintf("id=%s name=%s", body.ID, body.Name), status)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "id": body.ID})
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": status, "id": body.ID, "connected": connected})
 }
 
 // DELETE /api/apps/:id — remove app
@@ -310,15 +384,30 @@ func handleTeachStop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn.StopRecording()
+	conn.OnRecordEvent(nil)
 	tools.SetRecording(false)
 	events := tools.GetRecordedEvents()
 
-	// Optionally save if name provided in query
-	name := r.URL.Query().Get("name")
+	// Get name from body or query
+	var body struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	name := body.Name
+	if name == "" {
+		name = r.URL.Query().Get("name")
+	}
+	if name == "" {
+		name = fmt.Sprintf("recipe_%d", time.Now().Unix())
+	}
+
 	saved := false
-	if name != "" && len(events) > 0 {
+	if len(events) > 0 {
 		if err := recipes.SaveRecipe(name, events); err == nil {
 			saved = true
+			tools.LogActivity("teach:saved", fmt.Sprintf("name=%s steps=%d", name, len(events)), "ok")
+		} else {
+			tools.LogActivity("teach:save-error", name, err.Error())
 		}
 	}
 
@@ -344,14 +433,9 @@ func handleInventory(w http.ResponseWriter, r *http.Request) {
 			if page.Type != "page" {
 				continue
 			}
-			id := strings.ToLower(page.Title)
-			id = strings.ReplaceAll(id, " ", "-")
+			id := cleanAppID(page.Title, page.URL)
 			if id == "" {
 				id = fmt.Sprintf("page-%d", port)
-			}
-			// Limit ID length
-			if len(id) > 40 {
-				id = id[:40]
 			}
 			items = append(items, inventoryItem{
 				ID:    id,
