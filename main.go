@@ -6,6 +6,7 @@ import (
 
 	"github.com/lucasaugustodev/cdp-mcp/cdp"
 	"github.com/lucasaugustodev/cdp-mcp/dashboard"
+	"github.com/lucasaugustodev/cdp-mcp/engine"
 	"github.com/lucasaugustodev/cdp-mcp/mcp"
 	"github.com/lucasaugustodev/cdp-mcp/tools"
 )
@@ -42,6 +43,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Dashboard mode: http://localhost:%d\n", port)
 		fmt.Fprintf(os.Stderr, "Auto-connecting to CDP apps...\n")
 		go autoConnectCDP()
+		go engine.Start()
 		dashboard.Start(port) // blocks forever
 		return
 	}
@@ -57,6 +59,7 @@ func main() {
 	tools.RegisterTasks(server)
 
 	go dashboard.Start(9400)
+	go engine.Start()
 
 	server.Run()
 }
