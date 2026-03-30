@@ -10,8 +10,8 @@ const dashboardHTML = `<!DOCTYPE html>
 body { background: #0a0a0a; color: #e0e0e0; font-family: system-ui, -apple-system, sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
 
 /* Tab Bar */
-.tab-bar { display: flex; align-items: center; background: #111; border-bottom: 1px solid #2a2a2a; padding: 0 12px; height: 44px; flex-shrink: 0; }
-.tab { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; color: #ccc; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; user-select: none; white-space: nowrap; }
+.tab-bar { display: flex; align-items: center; background: #111; border-bottom: 1px solid #2a2a2a; padding: 0 12px; height: 44px; flex-shrink: 0; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; }
+.tab { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; color: #ccc; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; user-select: none; white-space: nowrap; flex-shrink: 0; }
 .tab:hover { color: #fff; background: rgba(255,255,255,0.04); }
 .tab.active { color: #fff; border-bottom-color: #60a5fa; }
 .tab .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }

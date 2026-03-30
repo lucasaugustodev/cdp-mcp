@@ -53,11 +53,33 @@ var state = &State{
 // deriveAppID creates an app ID from a title (lowercase, no spaces).
 func deriveAppID(title string) string {
 	id := strings.ToLower(title)
-	id = strings.ReplaceAll(id, " ", "-")
-	if id == "" {
-		id = "default"
+	// Remove leading numbers/parens: "(2) Mensagens | LinkedIn" → "mensagens | linkedin"
+	for len(id) > 0 && (id[0] == '(' || id[0] == ')' || id[0] == ' ' || (id[0] >= '0' && id[0] <= '9')) {
+		id = id[1:]
 	}
-	return id
+	// Take first meaningful word before separators
+	for _, sep := range []string{" | ", " - ", " — "} {
+		if idx := strings.Index(id, sep); idx > 0 {
+			id = id[:idx]
+		}
+	}
+	id = strings.TrimSpace(id)
+	// Only keep alphanumeric + hyphens
+	var clean []byte
+	for _, c := range []byte(id) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			clean = append(clean, c)
+		} else if c == ' ' || c == '-' || c == '_' {
+			if len(clean) > 0 && clean[len(clean)-1] != '-' {
+				clean = append(clean, '-')
+			}
+		}
+	}
+	result := strings.Trim(string(clean), "-")
+	if result == "" {
+		result = "default"
+	}
+	return result
 }
 
 // getActiveAppState returns the active app state, falling back to the first
@@ -93,8 +115,26 @@ func GetConn() *cdp.Connection {
 // SetConn sets the active CDP connection (backwards compatible).
 // Derives appId from the title.
 func SetConn(conn *cdp.Connection, title, url string, port int) {
-	appID := deriveAppID(title)
+	appID := deriveAppIDFromURL(title, url)
 	SetAppConn(appID, conn, title, url, port)
+}
+
+// deriveAppIDFromURL tries URL domain first, then falls back to title
+func deriveAppIDFromURL(title, url string) string {
+	urlLower := strings.ToLower(url)
+	domainMap := map[string]string{
+		"whatsapp.com": "whatsapp", "linkedin.com": "linkedin", "instagram.com": "instagram",
+		"facebook.com": "facebook", "twitter.com": "twitter", "x.com": "twitter",
+		"youtube.com": "youtube", "spotify.com": "spotify", "github.com": "github",
+		"slack.com": "slack", "discord.com": "discord", "reddit.com": "reddit",
+		"notion.so": "notion", "figma.com": "figma", "mail.google.com": "gmail",
+	}
+	for domain, id := range domainMap {
+		if strings.Contains(urlLower, domain) {
+			return id
+		}
+	}
+	return deriveAppID(title)
 }
 
 // SetAppConn sets a CDP connection for an explicit appId.
