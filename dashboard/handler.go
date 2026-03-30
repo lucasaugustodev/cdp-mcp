@@ -172,7 +172,11 @@ func handleScreenshot(w http.ResponseWriter, r *http.Request) {
 
 	jpegBytes, err := conn.CaptureScreenshot()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Return a small placeholder image instead of 500
+		// This prevents broken image icons in the dashboard
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprintf(w, `<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900"><rect fill="#111"/><text x="720" y="450" text-anchor="middle" fill="#555" font-size="16" font-family="system-ui">Screenshot unavailable — reconnecting...</text></svg>`)
 		return
 	}
 
