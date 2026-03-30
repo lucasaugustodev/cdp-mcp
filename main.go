@@ -53,6 +53,8 @@ func main() {
 	tools.RegisterInteraction(server)
 	tools.RegisterRecording(server)
 	tools.RegisterAdvanced(server)
+	tools.RegisterApps(server)
+	tools.RegisterTasks(server)
 
 	go dashboard.Start(9400)
 
