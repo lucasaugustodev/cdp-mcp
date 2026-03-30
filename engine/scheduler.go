@@ -20,6 +20,10 @@ var lastRunTimes = make(map[string]time.Time)
 // Start is the main engine loop. It runs forever, checking tasks every 10 seconds.
 func Start() {
 	log.Println("[engine] Task engine started")
+
+	// Inject DOM observers for monitor/workflow tasks
+	go StartMonitors()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
